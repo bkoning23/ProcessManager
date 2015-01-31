@@ -76,6 +76,7 @@ void createServer(int minProcs, int maxProcs, char *serverName, char *argv[]){
 	printf("Pid: %d\n", getpid());	
 	sleep(20);
 	
+	//HELLOOOOOOOOOOOOO
 	//printf("%d %d %s\n", minProcs, maxProcs, serverName);
 
 
