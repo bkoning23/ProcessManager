@@ -34,13 +34,19 @@ int main(int argc, char *argv[])
 			sscanf (word, "%d", &maxProc);		
 			word = strtok(NULL, " \n");
 			printf("Pid: %d\n", getpid());
-			createServer(minProc, maxProc, word, argv);
+			if ((pid = fork()) < 0){
+				perror("Fork error");
+			}
+			else if(!pid){
+				sprintf(argv[0], "%s", word);
+				printf("PARENT SERVER PROCESS: %d\n", getpid());
+				createServer(minProc, maxProc, word, argv);
+			}
 		}
 		else{
 			sleep(2);
-			printf("Pid: %d\n", getpid());
+			printf("PROCESS MANAGER: %d\n", getpid());
 		}
-		
 	}
 
 	return(0);
@@ -65,7 +71,7 @@ void createServer(int minProcs, int maxProcs, char *serverName, char *argv[]){
 			perror("Fork error");
 		}
 		else if(!pid){
-			sprintf(argv[0], "Spawned Server %d", i);
+			sprintf(argv[0], "%s %d", word, i);
 			break;
 		}
 		else{
