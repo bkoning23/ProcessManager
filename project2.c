@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -7,7 +6,7 @@
 #include <string.h>
 
 void sigHandler (int);
-void createServer(int, int, char*, char*[]);
+void createServer(int, int, char*, char*[], int);
 pid_t pid, secondPid, ppid;
 
 char str[50];
@@ -34,17 +33,12 @@ int main(int argc, char *argv[])
 			sscanf (word, "%d", &maxProc);		
 			word = strtok(NULL, " \n");
 			printf("Pid: %d\n", getpid());
-			if ((pid = fork()) < 0){
-				perror("Fork error");
-			}
-			else if(!pid){
-				sprintf(argv[0], "%s", word);
-				printf("PARENT SERVER PROCESS: %d\n", getpid());
-				createServer(minProc, maxProc, word, argv);
-			}
+			sprintf(argv[0], "%s", word);
+			printf("PARENT SERVER PROCESS: %d\n", getpid());
+			createServer(minProc, maxProc, word, argv, argc);
 		}
 		else{
-			sleep(2);
+			sleep(10);
 			printf("PROCESS MANAGER: %d\n", getpid());
 		}
 	}
@@ -57,7 +51,7 @@ int main(int argc, char *argv[])
 
 
 
-void createServer(int minProcs, int maxProcs, char *serverName, char *argv[]){
+void createServer(int minProcs, int maxProcs, char *serverName, char *argv[], int argc){
 	//Add checking that min is less than max
 	//TODO: This still doesn't work right
 	if(minProcs >= maxProcs){
@@ -82,10 +76,6 @@ void createServer(int minProcs, int maxProcs, char *serverName, char *argv[]){
 	printf("Pid: %d\n", getpid());	
 	sleep(20);
 	
-	//HELLOOOOOOOOOOOOO
-	//printf("%d %d %s\n", minProcs, maxProcs, serverName);
-
-
 }	
 
 
