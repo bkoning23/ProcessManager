@@ -6,11 +6,16 @@
 #include <string.h>
 #include <sys/prctl.h>
 #define SIZE 10
+#define MAXCHILDREN 20
+#define MAXSERVERS 10
 
 void sigHandler (int);
 void createServer(int, int, char*, char*[], int);
-pid_t pid, secondPid, ppid;
+void printMessage(char*, char*);
 
+pid_t pid, secondPid, ppid;
+pid_t children[25];
+int status;
 
 struct serverProcess{
 	int min;
@@ -18,16 +23,22 @@ struct serverProcess{
 	int current;
 	char name[50];
 	pid_t pid;
-	pid_t children[10];
+	pid_t children[25];
 	
 } allServers[SIZE];
 
-
+char name[50];
 char str[50];
+char temp[50];
 char *word;
-int minProc, maxProc;
+int minProc, maxProc, currentProc;
 int var2;
+
+//CurrentServer Count
 int currentServer = 0;
+
+int currentAction = 0;
+int remakeChild = 1;
 
 
 int main(int argc, char *argv[])
@@ -35,17 +46,35 @@ int main(int argc, char *argv[])
 	
 	
 	while(1){
-		printf("Specify Command:\n");
+		printf("Specify Command: ");
 		fgets(str, 50, stdin);
 		word = strtok(str, " \n");
 		
 		if(!strcmp(word, "createServer")){
 			
+			if(currentServer == MAXSERVERS){
+				printMessage("1", "There are too many servers, delete one to make a new one.");
+				continue;
+			}
+			
 			word = strtok(NULL, " \n");
 			sscanf (word, "%d", &minProc);
 			word = strtok(NULL, " \n");
-			sscanf (word, "%d", &maxProc);		
+			sscanf (word, "%d", &maxProc);
+			currentProc = minProc;
 			word = strtok(NULL, " \n");
+			
+			if(minProc > maxProc){
+				printMessage("1", "Min processes must be less than or equal to max processes.");
+				continue;
+			}
+			if(maxProc > MAXCHILDREN){
+				sprintf(temp, "Max processes cannot go above %d.", MAXCHILDREN);
+				printMessage("1", temp);
+				continue;
+			}
+				
+			
 			if ((pid = fork()) < 0){
 				perror("Fork failure");
 				exit(1);
@@ -54,60 +83,195 @@ int main(int argc, char *argv[])
 			else if (!pid){
 				//Changes the name of the child process to the new name
 				sprintf(argv[0], "%s", word);
-				printf("PARENT SERVER PROCESS: %d\n", getpid());
+				strcpy(name, word);
+				
+				//Prints that a new server has been made.
+				
 				currentServer++;
 				createServer(minProc, maxProc, word, argv, argc);
-				pause();
+
+				//Installs signal handlers for the main server
+				struct sigaction new_action, abort_action;
+				sigset_t block_mask;
+				
+				new_action.sa_handler = sigHandler;
+				abort_action.sa_handler = sigHandler;
+				sigemptyset(&block_mask);
+				sigaddset(&block_mask, SIGCHLD);
+				abort_action.sa_mask = block_mask;
+				
+				abort_action.sa_flags = 0;
+				new_action.sa_flags = 0;
+				sigaction(SIGUSR1, &abort_action, NULL);
+				sigaction(SIGCHLD, &new_action, NULL);
+				sigaction(SIGUSR2, &new_action, NULL);
+				
+				// IF THERE IS A PROBLEM THIS WAS CHANGED RECENTLY
+				
+				sigaction(SIGTERM, &abort_action, NULL);
+						
+				while(1){
+					pause();
+					//Add a process thread
+					if(currentAction == 1){
+						if ((pid = fork()) < 0){
+							perror("Fork failure");
+							exit(1);
+						}
+						else if (!pid){
+							//This is installed because the above sighandlers install something for
+							//SIGTERM, which is used to end a child process.
+							struct sigaction action;
+							action.sa_handler = SIG_DFL;
+							sigaction(SIGTERM, &action, NULL);
+							pause();
+						}
+						//Parent records PID of new child, increments current process count
+						else{
+							sprintf(temp, "Copy Started. PID: %d", pid);
+							printMessage(name, temp);
+							children[currentProc] = pid;
+							currentProc++;
+							currentAction = 0;
+						}
+					}
+				}
 				
 			}
 			//Process Manager
 			else{
+				//Stores information about the newly created server
+				
+				struct sigaction new_action;
+				new_action.sa_handler = sigHandler;
+				sigaction(SIGCHLD, &new_action, NULL);
+				
+				sprintf(temp, "Server %s Created. PID: %d.", word, pid);
+				printMessage("1", temp);
+				
+				
 				allServers[currentServer].min = minProc;
 				allServers[currentServer].max = maxProc;
 				allServers[currentServer].current = minProc;
 				strcpy(allServers[currentServer].name, word);
 				allServers[currentServer].pid = pid;
 				currentServer++;
-				printf("PROCESS MANAGER: %d\n", getpid());
-				printf("%d\n", allServers[0].min);
-				printf("%d\n", allServers[0].max);
-				printf("%d\n", allServers[0].current);
-				printf("%s\n", allServers[0].name);
-				printf("%d\n", allServers[0].pid);
+				sleep(1);
+				//printf("PROCESS MANAGER: %d\n", getpid());
+				//printf("%d\n", allServers[0].min);
+				//printf("%d\n", allServers[0].max);
+				//printf("%d\n", allServers[0].current);
+				//printf("%s\n", allServers[0].name);
+				//printf("%d\n", allServers[0].pid);
 			}
 		}
 		else if (!strcmp(word, "abortServer")){
 			int i = 0;
 			word = strtok(NULL, " \n");
 			while( i < currentServer){
+				//Checks for a server with the user submitted name
 				if(!strcmp(word, allServers[i].name)){
-					printf("We found a server with the name %s, PID %d. Aborting.\n", word, allServers[i].pid);
-					kill(allServers[i].pid, SIGUSR1);
-					kill(allServers[i].pid, SIGKILL);
+					sprintf(temp, "Found a server with the name %s, PID %d. Aborting.", word, allServers[i].pid);
+					printMessage("1", temp);
+					kill(allServers[i].pid, SIGTERM);
+					wait(&status);
+					break;
 				}
 				i++;
 			}
-			printf("End of Abort");
+			//This removes the server and its information from the information array
+			while (i < currentServer){
+				allServers[i] = allServers[i+1];
+				i++;
+			}
+			currentServer--;
+			sprintf(temp, "%s Aborted", word);
+			printMessage("1", temp);
 		}
-
+		else if(!strcmp(word, "createProcess")){
+			int i = 0;
+			word = strtok(NULL, " \n");
+			while ( i < currentServer){
+				if(!strcmp(word, allServers[i].name)){
+					if(allServers[i].max < allServers[i].current + 1){
+						sprintf(temp, "Creating a process would result in too many processes.");
+						printMessage("1", temp);
+						break;
+					}
+					sprintf(temp, "Found a server to create a process, %d PID.", allServers[i].pid);
+					printMessage("1", temp);
+					if (kill(allServers[i].pid, SIGUSR2) == -1){
+						perror("Create Send Error");
+					}
+					sleep(1);
+					allServers[i].current = allServers[i].current + 1;
+					break;
+				}
+				i++;
+			}
+		}
+		else if(!strcmp(word, "abortProcess")){
+			int i = 0;
+			word = strtok(NULL, " \n");
+			while ( i < currentServer){
+				if(!strcmp(word, allServers[i].name)){
+					if(allServers[i].min > allServers[i].current - 1){				
+						printMessage("1", "Aborting a process would result in too few processes.");
+						break;
+					}
+					sprintf(temp, "Found a server to abort a process, %d PID.", allServers[i].pid);
+					printMessage("1", temp);
+					if (kill(allServers[i].pid, SIGUSR1) == -1){
+						perror("Abort Send Error");
+					}
+					else{
+						printf("Kill was sent");
+						allServers[i].current = allServers[i].current - 1;
+						sleep(1);
+						break;
+					}
+					
+				}
+				i++;
+			}
+			
+		}
+		else if(!strcmp(word, "displayStatus")){
+			printf("Server Count: %d\n", currentServer);
+			int i;
+			for(i =0; i != currentServer; i++){
+				struct serverProcess p = allServers[i];
+				printf("Server %d Name: %s\n", i, p.name);
+				printf("Server %d Current: %d\n", i, p.current);
+				printf("Server %d Max: %d\n", i, p.max);
+				printf("Server %d Min: %d\n", i, p.min);
+			}
+		}
+			
+			
+			
+		
 	}
-	
 	return(0);
 		
 }
 
 
+void printMessage(char *sender, char *message){
+	
+	if(!strcmp(sender, "1")){
+		printf("[PROCESS MANAGER] %s\n", message);
+	}
+	else{
+		printf("[SERVER %s] %s\n", sender, message);
+	}
+}
 
 
 void createServer(int minProcs, int maxProcs, char *serverName, char *argv[], int argc){
 	//Add checking that min is less than max
 	//TODO: This still doesn't work right
 		
-	if(minProcs >= maxProcs){
-		perror("Min procs must be less than max procs");
-		exit(0);
-	}
-	
 	int i = 0;
 	while ( i != minProcs){
 		if ((pid = fork()) < 0){
@@ -116,32 +280,60 @@ void createServer(int minProcs, int maxProcs, char *serverName, char *argv[], in
 		//Server child clone
 		else if(!pid){
 			sprintf(argv[0], "%s %d", word, i);
-			prctl(PR_SET_PDEATHSIG, SIGINT);
 			pause();
 		}
 		//Main Server
 		else{
-
+			children[i] = pid;
+			sprintf(temp, "Copy Started. PID: %d", pid);
+			printMessage(name, temp);
 			i++;
 		}
 	}
-	
 		
-	printf("Pid: %d\n", getpid());	
-	signal(SIGUSR1, sigHandler);
-	pause();
-	
 }	
 
 void
 sigHandler (int sigNum)
 {
-	if(sigNum == SIGUSR1){
-		printf("SIGUSER1");
+	if(sigNum == SIGTERM){
+		printf("SIGTERM\n");
+		int i = 0;
+		remakeChild = 0;
+		while ( children[i] != 0 ){
+			kill(children[i], SIGTERM);
+			sprintf(temp, "Killed %d", children[i]);
+			//printf("Killed %d\n", children[i]);
+			printMessage(name, temp);
+			i++;
+		}
 		exit(0);
 	}
-
+	//Abort Process
+	else if(sigNum == SIGUSR1){
+		remakeChild = 0;
+		sprintf(temp, "THIS IS WHO WE ARE KILLING %d", children[currentProc-1]);
+		printMessage(name, temp);
+		kill(children[currentProc-1], SIGTERM);
+		wait(&status);
+		children[currentProc-1] = NULL;
+		currentProc--;		
+	}
+	//Add process
+	else if(sigNum == SIGUSR2){
+		printf("SIGUSR2\n");
+		currentAction = 1;
+	}
 	
-    
+	else if(sigNum == SIGCHLD){
+		if (!remakeChild){
+			printf("Process purposely aborted\n");
+			remakeChild = 1;
+		}
+		else{
+			printf("SIGCHLD, %d", currentAction);
+		}
+	}
+
 } 
 
