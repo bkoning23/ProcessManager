@@ -5,53 +5,80 @@
 #include <time.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/wait.h>
 #define SIZE 10
 #define MAXCHILDREN 20
 #define MAXSERVERS 10
+
+//TODO: Main server process dies abnormally, children don't
+
+
+
+
 
 void sigHandler (int);
 void createServer(int, int, char*, char*[], int);
 void printMessage(char*);
 
-pid_t pid, secondPid, ppid;
-pid_t children[25];
-int status;
+/*Structure that the process manager uses to hold
+information about all of the servers. The allServers
+array is one more than the total number of servers 
+because if we delete a server when we have a full
+array of servers we would have a SEGFAULT. This is 
+because the array is updated by moving the next value
+into the previous location in the array. Ex, we
+remove server 9. We copy server 10 into server 9, and
+server 11 into server 10. If our array can only hold 10
+servers, we get a SEGFAULT. Increasing the size of the
+server array to MAXSERVERS+1 prevents this as the last entry
+will always be NULL.*/
 
 struct serverProcess{
-	int min;
-	int max;
-	int current;
+	int min, max, current;
 	char name[50];
 	pid_t pid;
-	pid_t children[25];
-	
-} allServers[SIZE];
+} allServers[MAXSERVERS+1];
 
-char name[50];
-char str[50];
-char temp[50];
+pid_t pid;
+pid_t children[MAXCHILDREN];
+char name[50], str[50], temp[50];
 char *word;
-int minProc, maxProc, currentProc;
-int var2;
+int minProc, maxProc, currentProc, currentNameNumber, status;
 int killedProcess = 0;
 
 //CurrentServer Count
 int currentServer = 0;
 
+/*This is a flag that specifies that a new process is
+going to be added, and how to add it.
+
+0 - Do not make a new process.
+1 - Make a new process.
+2 - Make a new process, replacing a process that was terminated.
+
+*/
 int currentAction = 0;
+
+/*This is a flag to specify if a child process was aborted
+on purpose (using abortProcess) or not.
+
+0 - Child process was aborted using abortProcess
+1 - Child process was not aborted using abortProcess and
+	will be recreated.
+
+*/
 int remakeChild = 1;
 
 
 int main(int argc, char *argv[])
 {
-	
-	
 	while(1){
 		
+		//Renames the original process to ProcessManager
 		sprintf(argv[0], "%s", "ProcessManager");
 		strcpy(name, "ProcessManager");
 		
-		
+		//Prompts User for a command
 		printf("Specify Command: ");
 		fgets(str, 50, stdin);
 		word = strtok(str, " \n");
@@ -63,11 +90,13 @@ int main(int argc, char *argv[])
 				continue;
 			}
 			
+			//Stores information about the server the user wants to create
 			word = strtok(NULL, " \n");
 			sscanf (word, "%d", &minProc);
 			word = strtok(NULL, " \n");
 			sscanf (word, "%d", &maxProc);
 			currentProc = minProc;
+			currentNameNumber = currentProc;
 			word = strtok(NULL, " \n");
 			
 			if(minProc > maxProc){
@@ -87,13 +116,10 @@ int main(int argc, char *argv[])
 			}
 			//Main Server Process
 			else if (!pid){
-				//Changes the name of the child process to the new name
+				//Changes the name of the server process to the server name
 				sprintf(argv[0], "%s", word);
 				strcpy(name, word);
-				
-				//Prints that a new server has been made.
-				
-				currentServer++;
+		
 				createServer(minProc, maxProc, word, argv, argc);
 
 				//Installs signal handlers for the main server
@@ -102,32 +128,53 @@ int main(int argc, char *argv[])
 				
 				new_action.sa_handler = sigHandler;
 				abort_action.sa_handler = sigHandler;
+				
+				
 				sigemptyset(&block_mask);
 				sigaddset(&block_mask, SIGCHLD);
 				abort_action.sa_mask = block_mask;
 				
 				abort_action.sa_flags = 0;
 				new_action.sa_flags = 0;
-				sigaction(SIGUSR1, &abort_action, NULL);
+				sigaction(SIGUSR1, &new_action, NULL);
 				sigaction(SIGCHLD, &new_action, NULL);
-				sigaction(SIGUSR2, &new_action, NULL);
-				
-				// IF THERE IS A PROBLEM THIS WAS CHANGED RECENTLY
-				
+				sigaction(SIGUSR2, &new_action, NULL);		
+						
+				/*SIGTERM uses a mask because when we abort the server,
+				we do not want a SIGCHLD signal being processed each
+				time the main server kills a child process in order to 
+				clean up. This ensures that the SIGCHLD signal is handled 
+				after main server is done killing ALL of its child processes.
+				In this implementation the SIGCHLD signal is not handled 
+				because the main server process terminates at the 
+				end of the SIGTERM signal handler.*/
 				sigaction(SIGTERM, &abort_action, NULL);
 						
 				while(1){
+					/*The main server process waits for a signal. In this 
+					implementation there are four signals the main server waits for:
+					SIGTERM - terminate the server and its children.
+					SIGUSR1 - Abort a process (abortProcess)
+					SIGUSR2 - Create a process (createProcess)
+					SIGCHLD - A child process was killed.
+					
+					SIGTERM and SIGUSR1 are handled entirely in the signal handler.
+					SIGUSR2 and SIGCHLD are partially handled here, because the new processes
+					that may be created need to be renamed.
+					*/
 					pause();
-					//Add a process thread
+					
+					//Add a process copy
 					if(currentAction >= 1){
 						if ((pid = fork()) < 0){
 							perror("Fork failure");
 							exit(1);
 						}
 						else if (!pid){
-							//This is installed because the above sighandlers install something for
-							//SIGTERM, which is used to end a child process.
-							sprintf(argv[0], "%s %d", name, currentProc);
+							/*This is installed because the above sighandler overwrites
+							SIGTERM. The children processes do not need to handle SIGTERM
+							in a special way and use the default handler*/
+							sprintf(argv[0], "%s %d", name, currentNameNumber);
 							struct sigaction action;
 							action.sa_handler = SIG_DFL;
 							sigaction(SIGTERM, &action, NULL);
@@ -137,16 +184,24 @@ int main(int argc, char *argv[])
 						else{
 							sprintf(temp, "Copy Started. PID: %d", pid);
 							printMessage(temp);
+							/*If a child was terminated abnormally and we are replacing it, we find
+							the PID of the terminated child in our array of children PIDs,
+							and replace it with the PID of the new process.*/
 							if(currentAction == 2){
 								int j = 0;
 								while(children[j] != killedProcess){
-									;
+									j++;
 								}
 								children[j] = pid;
+								currentNameNumber++;
 							}
+							/*If we are just adding a new process (createProcess) then we add
+							the PID of the new process to the array of children PIDs and increment
+							how many children we have.*/
 							else{
 								children[currentProc] = pid;
 								currentProc++;
+								currentNameNumber++;
 							}
 							currentAction = 0;
 						}
@@ -156,25 +211,18 @@ int main(int argc, char *argv[])
 			}
 			//Process Manager
 			else{
-				//Stores information about the newly created server
-								
+				//Stores information about the newly created server		
 				sprintf(temp, "Server %s Created. PID: %d.", word, pid);
 				printMessage(temp);
-				
-				
 				allServers[currentServer].min = minProc;
 				allServers[currentServer].max = maxProc;
 				allServers[currentServer].current = minProc;
 				strcpy(allServers[currentServer].name, word);
 				allServers[currentServer].pid = pid;
 				currentServer++;
+				//TODO: Replace to wait for a signal from the main server. wait(&status) maybe.
 				sleep(1);
-				//printf("PROCESS MANAGER: %d\n", getpid());
-				//printf("%d\n", allServers[0].min);
-				//printf("%d\n", allServers[0].max);
-				//printf("%d\n", allServers[0].current);
-				//printf("%s\n", allServers[0].name);
-				//printf("%d\n", allServers[0].pid);
+
 			}
 		}
 		else if (!strcmp(word, "abortServer")){
@@ -185,19 +233,24 @@ int main(int argc, char *argv[])
 				if(!strcmp(word, allServers[i].name)){
 					sprintf(temp, "Found a server with the name %s, PID %d. Aborting.", word, allServers[i].pid);
 					printMessage(temp);
-					kill(allServers[i].pid, SIGTERM);
+					if (kill(allServers[i].pid, SIGUSR1) == -1){
+						perror("Abort Send Error");
+					}
 					wait(&status);
 					break;
 				}
 				i++;
 			}
-			//This removes the server and its information from the information array
+			/*This removes the server and its information from the information array. 
+			This is done by moving each server struct forward one place in the array, 
+			starting by overwritting the server we aborted.*/
+			
 			while (i < currentServer){
 				allServers[i] = allServers[i+1];
 				i++;
 			}
 			currentServer--;
-			sprintf(temp, "%s Aborted", word);
+			sprintf(temp, "%s Aborted.", word);
 			printMessage(temp);
 		}
 		else if(!strcmp(word, "createProcess")){
@@ -237,7 +290,6 @@ int main(int argc, char *argv[])
 						perror("Abort Send Error");
 					}
 					else{
-						printf("Kill was sent");
 						allServers[i].current = allServers[i].current - 1;
 						sleep(1);
 						break;
@@ -249,9 +301,10 @@ int main(int argc, char *argv[])
 			
 		}
 		else if(!strcmp(word, "displayStatus")){
-			printf("Server Count: %d\n", currentServer);
+			sprintf(temp,"Server Count: %d\n", currentServer);
+			printMessage(temp);
 			int i;
-			for(i =0; i != currentServer; i++){
+			for(i = 0; i != currentServer; i++){
 				struct serverProcess p = allServers[i];
 				printf("Server %d Name: %s\n", i, p.name);
 				printf("Server %d Current: %d\n", i, p.current);
@@ -268,17 +321,17 @@ int main(int argc, char *argv[])
 		
 }
 
-
+/*This function simplifies message printing by allowing the
+programmer to specify only the message to print. This function
+adds the name of the process that calls it to the front of the
+message.*/
 void printMessage(char *message){
-
 	printf("[%s] %s\n", name, message);
-
-
 }
 
-
+/*Creates new copies of a server process using information specified 
+by the user */
 void createServer(int minProcs, int maxProcs, char *serverName, char *argv[], int argc){
-		
 	int i = 0;
 	while ( i != minProcs){
 		if ((pid = fork()) < 0){
@@ -297,7 +350,6 @@ void createServer(int minProcs, int maxProcs, char *serverName, char *argv[], in
 			i++;
 		}
 	}
-		
 }	
 
 void
@@ -310,7 +362,6 @@ sigHandler (int sigNum)
 		while ( children[i] != 0 ){
 			kill(children[i], SIGTERM);
 			sprintf(temp, "Killed %d", children[i]);
-			//printf("Killed %d\n", children[i]);
 			printMessage(temp);
 			i++;
 		}
@@ -323,21 +374,16 @@ sigHandler (int sigNum)
 		printMessage(temp);
 		kill(children[currentProc-1], SIGTERM);
 		wait(&status);
-		children[currentProc-1] = NULL;
+		children[currentProc-1] = '\0';
 		currentProc--;		
 	}
 	//Add process
 	else if(sigNum == SIGUSR2){
-		printf("SIGUSR2\n");
 		currentAction = 1;
 	}
 	
 	else if(sigNum == SIGCHLD){
-		
-		
-		
 		if (!remakeChild){
-			printf("Process purposely aborted\n");
 			remakeChild = 1;
 		}
 		else{
@@ -345,8 +391,10 @@ sigHandler (int sigNum)
 			if(killedProcess == -1){
 				perror("Killed Process returned -1");
 			}
+			//Process killed abnormally
 			currentAction = 2;
-			printf("SIGCHLD, %d, %d", currentAction, killedProcess);
+			sprintf(temp, "Child Process %d aborted abnormally, restarting.", killedProcess);
+			printMessage(temp);
 		}
 	}
 
