@@ -323,15 +323,24 @@ int main(int argc, char *argv[])
 			
 		}
 		else if(!strcmp(word, "displayStatus")){
-			sprintf(temp,"Server Count: %d\n", currentServer);
+			sprintf(temp,"Server Count: %d", currentServer);
 			printMessage(temp);
+			printf("ProcessManager\n");
 			int i;
 			for(i = 0; i != currentServer; i++){
+				int j = 0;
+				char heir[500];
 				struct serverProcess p = allServers[i];
-				printf("Server %d Name: %s\n", i, p.name);
-				printf("Server %d Current: %d\n", i, p.current);
-				printf("Server %d Max: %d\n", i, p.max);
-				printf("Server %d Min: %d\n", i, p.min);
+				//printf("Server %d Name: %s\n", i, p.name);
+				sprintf(temp, "\\ \n  %s - Current: %d Copies; Max: %d Copies; Min: %d Copies", p.name, p.current, p.max, p.min);
+				strcpy(heir, temp);
+				while( j < p.current){
+					sprintf(temp, "\n     \\ \n      |--%s %d", p.name, j);
+					strcat(heir, temp);
+					j++;
+				}
+				printf("%s\n", heir);
+				
 			}
 		}
 			
@@ -405,7 +414,8 @@ sigHandler (int sigNum)
 	}
 	
 	else if(sigNum == SIGCHLD){
-
+		/*This is if a main server process is killed abnormally, the 
+		process manager waits to ensure a zombie is not created. */
 		if(!strcmp(name, "ProcessManager")){
 			wait(&status);
 		}
