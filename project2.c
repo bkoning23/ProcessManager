@@ -1,20 +1,28 @@
+/*	Brendan Koning
+	processManager.c	
+	2/12/2015
+	
+	This program functions as a mock server process manager. The program
+	spawns "servers", which then replicate themselves a specified number of
+	times. The process manager can create new servers, abort created servers,
+	increase the number of duplicates and decrease the number of duplicates.
+	The program can also create a hierarchical display showing the servers and
+	how many duplicates they have.
+*/
+
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <signal.h>
-#include <time.h>
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/wait.h>
+
 #define SIZE 10
 #define MAXCHILDREN 20
 #define MAXSERVERS 10
 
-//TODO: Main server process dies abnormally, children don't
-
-
-
-
+//TODO: Main server process dies abnormally, children don't.
 
 void sigHandler (int);
 void createServer(int, int, char*, char*[], int);
@@ -83,6 +91,11 @@ int main(int argc, char *argv[])
 		fgets(str, 50, stdin);
 		word = strtok(str, " \n");
 		
+		
+		struct sigaction manager_action;
+		manager_action.sa_handler = sigHandler;
+		sigaction(SIGCHLD, &manager_action, NULL);
+		
 		if(!strcmp(word, "createServer")){
 			
 			if(currentServer == MAXSERVERS){
@@ -99,15 +112,24 @@ int main(int argc, char *argv[])
 			currentNameNumber = currentProc;
 			word = strtok(NULL, " \n");
 			
+			if(minProc < 1){
+				printMessage("The minimum number of processes must be at least one.");
+				continue;
+			}
 			if(minProc > maxProc){
-				printMessage("Min processes must be less than or equal to max processes.");
+				printMessage("The minimum number of processes must be less than or equal to the max number of processes.");
 				continue;
 			}
 			if(maxProc > MAXCHILDREN){
-				sprintf(temp, "Max processes cannot go above %d.", MAXCHILDREN);
+				sprintf(temp, "The maximum number of processes cannot go above %d.", MAXCHILDREN);
 				printMessage(temp);
 				continue;
 			}
+			if(!strcmp(word, "ProcessManager")){
+				printMessage("Server name cannot be ProcessManager.");
+				continue;
+			}
+				
 				
 			
 			if ((pid = fork()) < 0){
@@ -220,7 +242,7 @@ int main(int argc, char *argv[])
 				strcpy(allServers[currentServer].name, word);
 				allServers[currentServer].pid = pid;
 				currentServer++;
-				//TODO: Replace to wait for a signal from the main server. wait(&status) maybe.
+
 				sleep(1);
 
 			}
@@ -233,7 +255,7 @@ int main(int argc, char *argv[])
 				if(!strcmp(word, allServers[i].name)){
 					sprintf(temp, "Found a server with the name %s, PID %d. Aborting.", word, allServers[i].pid);
 					printMessage(temp);
-					if (kill(allServers[i].pid, SIGUSR1) == -1){
+					if (kill(allServers[i].pid, SIGTERM) == -1){
 						perror("Abort Send Error");
 					}
 					wait(&status);
@@ -356,7 +378,6 @@ void
 sigHandler (int sigNum)
 {
 	if(sigNum == SIGTERM){
-		printf("SIGTERM\n");
 		int i = 0;
 		remakeChild = 0;
 		while ( children[i] != 0 ){
@@ -365,12 +386,13 @@ sigHandler (int sigNum)
 			printMessage(temp);
 			i++;
 		}
+		printMessage("Aborting.");
 		exit(0);
 	}
 	//Abort Process
 	else if(sigNum == SIGUSR1){
 		remakeChild = 0;
-		sprintf(temp, "THIS IS WHO WE ARE KILLING %d", children[currentProc-1]);
+		sprintf(temp, "Copy aborted. PID: %d", children[currentProc-1]);
 		printMessage(temp);
 		kill(children[currentProc-1], SIGTERM);
 		wait(&status);
@@ -383,7 +405,11 @@ sigHandler (int sigNum)
 	}
 	
 	else if(sigNum == SIGCHLD){
-		if (!remakeChild){
+
+		if(!strcmp(name, "ProcessManager")){
+			wait(&status);
+		}
+		else if (!remakeChild){
 			remakeChild = 1;
 		}
 		else{
