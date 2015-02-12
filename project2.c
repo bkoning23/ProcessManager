@@ -19,10 +19,8 @@
 #include <sys/wait.h>
 
 #define SIZE 10
-#define MAXCHILDREN 20
+#define MAXCHILDREN 10
 #define MAXSERVERS 10
-
-//TODO: Main server process dies abnormally, children don't.
 
 void sigHandler (int);
 void createServer(int, int, char*, char*[], int);
@@ -48,7 +46,7 @@ struct serverProcess{
 } allServers[MAXSERVERS+1];
 
 pid_t pid;
-pid_t children[MAXCHILDREN];
+int children[MAXCHILDREN];
 char name[50], str[50], temp[50];
 char *word;
 int minProc, maxProc, currentProc, currentNameNumber, status;
@@ -76,6 +74,14 @@ on purpose (using abortProcess) or not.
 
 */
 int remakeChild = 1;
+
+/*This is a flag used to specify if the process manager is
+aborting a server on purpose. 
+
+0 - Server was abnormally aborted.
+1 - Server was aborted normally (abortServer)
+*/
+int serverAbort = 0;
 
 
 int main(int argc, char *argv[])
@@ -160,7 +166,8 @@ int main(int argc, char *argv[])
 				new_action.sa_flags = 0;
 				sigaction(SIGUSR1, &new_action, NULL);
 				sigaction(SIGCHLD, &new_action, NULL);
-				sigaction(SIGUSR2, &new_action, NULL);		
+				sigaction(SIGUSR2, &new_action, NULL);
+				sigaction(SIGURG, &new_action, NULL);
 						
 				/*SIGTERM uses a mask because when we abort the server,
 				we do not want a SIGCHLD signal being processed each
@@ -255,6 +262,8 @@ int main(int argc, char *argv[])
 				if(!strcmp(word, allServers[i].name)){
 					sprintf(temp, "Found a server with the name %s, PID %d. Aborting.", word, allServers[i].pid);
 					printMessage(temp);
+					remakeChild = 0;
+					serverAbort = 1;
 					if (kill(allServers[i].pid, SIGTERM) == -1){
 						perror("Abort Send Error");
 					}
@@ -266,8 +275,7 @@ int main(int argc, char *argv[])
 			/*This removes the server and its information from the information array. 
 			This is done by moving each server struct forward one place in the array, 
 			starting by overwritting the server we aborted.*/
-			
-			while (i < currentServer){
+			while (i < MAXCHILDREN){
 				allServers[i] = allServers[i+1];
 				i++;
 			}
@@ -328,7 +336,7 @@ int main(int argc, char *argv[])
 			printf("ProcessManager\n");
 			int i;
 			for(i = 0; i != currentServer; i++){
-				int j = 0;
+				/*int j = 0;
 				char heir[500];
 				struct serverProcess p = allServers[i];
 				//printf("Server %d Name: %s\n", i, p.name);
@@ -340,8 +348,11 @@ int main(int argc, char *argv[])
 					j++;
 				}
 				printf("%s\n", heir);
+				*/
+				kill(allServers[i].pid, SIGURG);
 				
 			}
+			sleep(1);
 		}
 			
 			
@@ -389,7 +400,7 @@ sigHandler (int sigNum)
 	if(sigNum == SIGTERM){
 		int i = 0;
 		remakeChild = 0;
-		while ( children[i] != 0 ){
+		while (i < currentProc){
 			kill(children[i], SIGTERM);
 			sprintf(temp, "Killed %d", children[i]);
 			printMessage(temp);
@@ -413,12 +424,19 @@ sigHandler (int sigNum)
 		currentAction = 1;
 	}
 	
-	else if(sigNum == SIGCHLD){
+	else if(sigNum == SIGCHLD){		
 		/*This is if a main server process is killed abnormally, the 
 		process manager waits to ensure a zombie is not created. */
 		if(!strcmp(name, "ProcessManager")){
-			wait(&status);
+			if(!serverAbort){
+				printf("SIGCHLD\n");
+				wait(&status);
+			}
+			else{
+				serverAbort = 0;
+			}
 		}
+		
 		else if (!remakeChild){
 			remakeChild = 1;
 		}
@@ -433,6 +451,22 @@ sigHandler (int sigNum)
 			printMessage(temp);
 		}
 	}
+	
+	else if (sigNum == SIGURG){
+		int j = 0;
+		char heir[4096];
+		sprintf(temp, "\\ \n %s - Current: %d Copies; Max: %d Copies; Min: %d Copies", name, currentProc, maxProc, minProc);
+		strcpy(heir, temp);
+		while(j < currentProc){
+			sprintf(temp, "\n     \\ \n      |--%s %d PID: %d", name, j, children[j]);
+			strcat(heir, temp);
+			j++;
+		}
+		printf("%s\n", heir);
+		
+		
+	}
+	
 
 } 
 
