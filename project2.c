@@ -429,7 +429,6 @@ sigHandler (int sigNum)
 		process manager waits to ensure a zombie is not created. */
 		if(!strcmp(name, "ProcessManager")){
 			if(!serverAbort){
-				printf("SIGCHLD\n");
 				wait(&status);
 			}
 			else{
